@@ -1,5 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
-import { Box, Circle, Cone, Cylinder, Pill, Redo2, Square, Torus, Undo2, List } from 'lucide-react'
+import { useEffect, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { Box, Circle, Cone, Cylinder, FileBox, Hexagon, PanelLeft, PanelRight, Pill, Redo2, Square, Torus, Undo2 } from 'lucide-react'
 import type { ShapeKind } from '../editor/model'
 import type { Editor, Snapshot } from '../editor/store'
 import { Inspector } from './Inspector'
@@ -13,7 +13,87 @@ const SHAPES: { kind: ShapeKind; label: string; icon: typeof Box }[] = [
   { kind: 'cylinder', label: 'Cylinder', icon: Cylinder },
   { kind: 'torus', label: 'Torus', icon: Torus },
   { kind: 'capsule', label: 'Capsule', icon: Pill },
+  { kind: 'custom', label: 'Custom', icon: Hexagon },
+  { kind: 'fbx', label: 'FBX', icon: FileBox },
 ]
+
+function clampWidth(width: number): number {
+  return Math.min(480, Math.max(180, width))
+}
+
+function SidePanel({
+  side,
+  open,
+  width,
+  label,
+  onToggle,
+  onWidth,
+  children,
+}: {
+  side: 'left' | 'right'
+  open: boolean
+  width: number
+  label: string
+  onToggle: () => void
+  onWidth: (width: number) => void
+  children: ReactNode
+}) {
+  function onResizeStart(event: ReactPointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = width
+    const move = (pointer: PointerEvent) => {
+      const delta = side === 'left' ? pointer.clientX - startX : startX - pointer.clientX
+      onWidth(clampWidth(startWidth + delta))
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  if (!open) {
+    return (
+      <button type="button" className={`panel-reveal ${side}`} aria-label={`Show ${label}`} onClick={onToggle}>
+        {side === 'left' ? <PanelLeft size={16} strokeWidth={1.75} /> : <PanelRight size={16} strokeWidth={1.75} />}
+      </button>
+    )
+  }
+
+  return (
+    <div className={`side-panel ${side}`} style={{ width }}>
+      {side === 'right' ? (
+        <button
+          type="button"
+          className="resize-handle"
+          aria-label={`Resize ${label}`}
+          onPointerDown={onResizeStart}
+          onKeyDown={(event) => {
+            const step = event.shiftKey ? 24 : 8
+            if (event.key === 'ArrowLeft') onWidth(clampWidth(width + step))
+            if (event.key === 'ArrowRight') onWidth(clampWidth(width - step))
+          }}
+        />
+      ) : null}
+      <div className="side-panel-body">{children}</div>
+      {side === 'left' ? (
+        <button
+          type="button"
+          className="resize-handle"
+          aria-label={`Resize ${label}`}
+          onPointerDown={onResizeStart}
+          onKeyDown={(event) => {
+            const step = event.shiftKey ? 24 : 8
+            if (event.key === 'ArrowLeft') onWidth(clampWidth(width - step))
+            if (event.key === 'ArrowRight') onWidth(clampWidth(width + step))
+          }}
+        />
+      ) : null}
+    </div>
+  )
+}
 
 function useSnapshot(editor: Editor): Snapshot {
   return useSyncExternalStore(editor.subscribe, editor.snapshot, editor.snapshot)
@@ -28,6 +108,10 @@ function fieldFocused(target: EventTarget | null): boolean {
 export function Studio({ editor }: { editor: Editor }) {
   const snapshot = useSnapshot(editor)
   const [renaming, setRenaming] = useState<string | null>(null)
+  const [outlinerOpen, setOutlinerOpen] = useState(true)
+  const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [outlinerWidth, setOutlinerWidth] = useState(220)
+  const [inspectorWidth, setInspectorWidth] = useState(320)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -101,8 +185,23 @@ export function Studio({ editor }: { editor: Editor }) {
       </header>
       <div className="body">
         <nav className="rail" aria-label="Tools">
-          <button type="button" className="rail-btn active" aria-label="Objects" aria-pressed="true">
-            <List size={18} strokeWidth={1.75} />
+          <button
+            type="button"
+            className={outlinerOpen ? 'rail-btn active' : 'rail-btn'}
+            aria-label="Objects"
+            aria-pressed={outlinerOpen}
+            onClick={() => setOutlinerOpen((open) => !open)}
+          >
+            <PanelLeft size={18} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className={inspectorOpen ? 'rail-btn active' : 'rail-btn'}
+            aria-label="Inspector"
+            aria-pressed={inspectorOpen}
+            onClick={() => setInspectorOpen((open) => !open)}
+          >
+            <PanelRight size={18} strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -123,10 +222,23 @@ export function Studio({ editor }: { editor: Editor }) {
             <Redo2 size={18} strokeWidth={1.75} />
           </button>
         </nav>
+        <SidePanel
+          side="left"
+          open={outlinerOpen}
+          width={outlinerWidth}
+          label="Objects"
+          onToggle={() => setOutlinerOpen(true)}
+          onWidth={setOutlinerWidth}
+        >
         <aside className="outliner" aria-label="Objects">
-          <h2>Objects</h2>
+          <div className="panel-title">
+            <h2>Objects</h2>
+            <button type="button" className="chrome-btn icon" aria-label="Hide objects" onClick={() => setOutlinerOpen(false)}>
+              <PanelLeft size={16} strokeWidth={1.75} />
+            </button>
+          </div>
           {snapshot.document.objects.length === 0 ? (
-            <p className="empty-copy">Add a cube, sphere, or plane.</p>
+            <p className="empty-copy">Add a shape, or a custom mesh you can cut and extrude.</p>
           ) : (
             <div className="object-list">
               {snapshot.document.objects.map((object) => {
@@ -138,6 +250,7 @@ export function Studio({ editor }: { editor: Editor }) {
                     <button
                       type="button"
                       className="object-hit"
+                      aria-label={object.name}
                       aria-current={selected ? 'true' : undefined}
                       onClick={() => editor.dispatch({ kind: 'select', id: object.id })}
                       onDoubleClick={() => {
@@ -186,13 +299,23 @@ export function Studio({ editor }: { editor: Editor }) {
             </div>
           )}
         </aside>
+        </SidePanel>
         <div className="workspace">
           <Viewport editor={editor} snapshot={snapshot} />
           <div className="stage-switch" aria-hidden="true">
             3D Stage
           </div>
         </div>
-        <Inspector editor={editor} snapshot={snapshot} />
+        <SidePanel
+          side="right"
+          open={inspectorOpen}
+          width={inspectorWidth}
+          label="Inspector"
+          onToggle={() => setInspectorOpen(true)}
+          onWidth={setInspectorWidth}
+        >
+          <Inspector editor={editor} snapshot={snapshot} onHide={() => setInspectorOpen(false)} />
+        </SidePanel>
       </div>
     </div>
   )

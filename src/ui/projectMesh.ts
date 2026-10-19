@@ -17,5 +17,8 @@ export function projectMeshes(state: MeshSource): ProjectedMesh[] {
     array: object.array,
     stroke: object.stroke,
     remix: object.remix,
+    mesh: object.mesh,
+    triangles: object.triangles,
+    activeFace: state.selection === object.id ? state.activeFace : null,
   }))
 }

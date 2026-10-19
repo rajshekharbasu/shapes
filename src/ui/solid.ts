@@ -1,13 +1,18 @@
 import { Brush, Evaluator, ADDITION, SUBTRACTION } from 'three-bvh-csg'
 import * as THREE from 'three'
 import type { ProjectedMesh } from '../editor/model'
-import { createShapeGeometry } from './shapeGeometry'
+import { createShapeGeometry, geometryFromQuads, geometryFromTriangles } from './shapeGeometry'
 import { applyDeform } from './deform'
 
 const DEG = Math.PI / 180
 
 function brushFrom(item: ProjectedMesh): Brush {
-  const brush = new Brush(applyDeform(createShapeGeometry(item.kind, true), item.deform))
+  const source = item.triangles
+    ? geometryFromTriangles(item.triangles)
+    : item.mesh
+      ? geometryFromQuads(item.mesh)
+      : createShapeGeometry(item.kind, true)
+  const brush = new Brush(applyDeform(source, item.deform))
   const { position, rotation, scale } = item.transform
   brush.position.set(position.x, position.y, position.z)
   brush.rotation.set(rotation.x * DEG, rotation.y * DEG, rotation.z * DEG)

@@ -1,5 +1,36 @@
-import { useState } from 'react'
-import { Box, Circle, Cone, Cylinder, Move, Pill, RotateCw, Scaling, Square, Torus, Trash2 } from 'lucide-react'
+import { useState, type ChangeEvent } from 'react'
+import {
+  ArrowUpFromLine,
+  Box,
+  Circle,
+  CloudSun,
+  Cone,
+  Copy,
+  Cylinder,
+  EyeOff,
+  FileBox,
+  Grid3x3,
+  Hexagon,
+  Lamp,
+  Minimize2,
+  Move,
+  Move3d,
+  Orbit,
+  Palette,
+  PanelRight,
+  PenLine,
+  Pill,
+  Rows3,
+  RotateCw,
+  Scaling,
+  Shuffle,
+  Slice,
+  SlidersHorizontal,
+  Square,
+  Sun,
+  Torus,
+  Trash2,
+} from 'lucide-react'
 import {
   displayTransform,
   objectById,
@@ -10,6 +41,7 @@ import {
   type GizmoTool,
 } from '../editor/model'
 import { COLOR_SWATCHES } from '../theme'
+import { trianglesFromFbx } from './loadFbx'
 import type { Editor, Snapshot } from '../editor/store'
 
 const TOOLS: { tool: GizmoTool; label: string; icon: typeof Move }[] = [
@@ -82,7 +114,15 @@ function commitValue(raw: string, channel: Channel): number | null {
   return value
 }
 
-export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snapshot }) {
+export function Inspector({
+  editor,
+  snapshot,
+  onHide,
+}: {
+  editor: Editor
+  snapshot: Snapshot
+  onHide: () => void
+}) {
   const selected = snapshot.selection ? objectById(snapshot.document, snapshot.selection) : undefined
   const transform = selected ? displayTransform(snapshot, selected.id) : null
   const [draft, setDraft] = useState('')
@@ -124,33 +164,64 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
   const arraySeed = selected?.array?.seed ?? 1
   const arrayJitter = selected?.array?.jitter ?? 0
 
+  async function importFbx(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const triangles = await trianglesFromFbx(await file.arrayBuffer())
+    if (!triangles) {
+      setStatus('That FBX has no usable mesh.')
+      return
+    }
+    setInvalidAxis(null)
+    setStatus('')
+    editor.dispatch({ kind: 'addFbx', name: file.name, triangles })
+  }
+
   function setArray(layout: ArrayLayout, axis: Axis, count: number, gap: number, seed = arraySeed, jitter = arrayJitter) {
     editor.dispatch({ kind: 'array', layout, axis, count, gap, seed, jitter })
   }
 
   return (
     <aside className="inspector" aria-label="Inspector">
+      <div className="inspector-tab-bar">
       <div className="inspector-tabs" role="tablist" aria-label="Inspector sections">
         {(
           [
-            ['object', 'Object'],
-            ['material', 'Material'],
-            ['modifiers', 'Modifiers'],
+            ['object', 'Object', Box],
+            ['material', 'Material', Palette],
+            ['modifiers', 'Modifiers', SlidersHorizontal],
           ] as const
-        ).map(([id, label]) => (
+        ).map(([id, label, Icon]) => (
           <button
             key={id}
             type="button"
             role="tab"
             id={`tab-${id}`}
+            aria-label={label}
             aria-selected={panel === id}
             aria-controls={`panel-${id}`}
             className={panel === id ? 'inspector-tab active' : 'inspector-tab'}
+            tabIndex={panel === id ? 0 : -1}
             onClick={() => setPanel(id)}
+            onKeyDown={(event) => {
+              const order = ['object', 'material', 'modifiers'] as const
+              const index = order.indexOf(id)
+              if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+              event.preventDefault()
+              const next = order[(index + (event.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length]
+              if (!next) return
+              setPanel(next)
+              document.getElementById(`tab-${next}`)?.focus()
+            }}
           >
-            {label}
+            <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
         ))}
+      </div>
+      <button type="button" className="inspector-tab hide-tab" aria-label="Hide inspector" onClick={onHide}>
+        <PanelRight size={16} strokeWidth={1.75} aria-hidden="true" />
+      </button>
       </div>
       {panel === 'object' ? (
         <div role="tabpanel" id="panel-object" aria-labelledby="tab-object" className="inspector-panel">
@@ -166,6 +237,7 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
               ['cylinder', Cylinder, 'Cylinder'],
               ['torus', Torus, 'Torus'],
               ['capsule', Pill, 'Capsule'],
+              ['custom', Hexagon, 'Custom'],
             ] as const
           ).map(([kind, Icon, label]) => (
             <button
@@ -178,6 +250,42 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
               <Icon size={16} strokeWidth={1.75} />
             </button>
           ))}
+          <label className="shape-btn">
+            <FileBox size={16} strokeWidth={1.75} aria-hidden="true" />
+            <input className="sr-only" type="file" accept=".fbx" aria-label="Add FBX" onChange={(event) => void importFbx(event)} />
+          </label>
+        </div>
+      </section>
+      <section>
+        <h2>Model</h2>
+        <div className="tool-row" role="group" aria-label="Model">
+          <button
+            type="button"
+            className="tool-btn"
+            aria-label="Loop cut"
+            disabled={!selected?.mesh}
+            onClick={() => editor.dispatch({ kind: 'loopCut' })}
+          >
+            <Slice size={16} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="tool-btn"
+            aria-label="Extrude"
+            disabled={!selected?.mesh}
+            onClick={() => editor.dispatch({ kind: 'extrude' })}
+          >
+            <ArrowUpFromLine size={16} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="tool-btn"
+            aria-label="Inset"
+            disabled={!selected?.mesh}
+            onClick={() => editor.dispatch({ kind: 'inset' })}
+          >
+            <Minimize2 size={16} strokeWidth={1.75} aria-hidden="true" />
+          </button>
         </div>
       </section>
       <section>
@@ -206,11 +314,11 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
                 key={item.tool}
                 type="button"
                 aria-pressed={active}
+                aria-label={item.label}
                 className={active ? 'tool-btn active' : 'tool-btn'}
                 onClick={() => editor.dispatch({ kind: 'setTool', tool: item.tool })}
               >
                 <item.icon size={16} strokeWidth={1.75} aria-hidden="true" />
-                {item.label}
               </button>
             )
           })}
@@ -255,14 +363,16 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
       <button
         type="button"
         className="tool-btn"
+        aria-label="Duplicate"
         disabled={!selected}
         onClick={() => editor.dispatch({ kind: 'duplicate' })}
       >
-        Duplicate
+        <Copy size={16} strokeWidth={1.75} aria-hidden="true" />
       </button>
       <button
         type="button"
         className="delete-btn"
+        aria-label="Delete"
         disabled={!selected}
         onClick={() => {
           editor.dispatch({ kind: 'delete' })
@@ -271,7 +381,6 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
         }}
       >
         <Trash2 size={16} strokeWidth={1.75} aria-hidden="true" />
-        Delete
       </button>
       <p className="live-status" role="status" aria-live="polite">
         {invalidAxis ? '' : status}
@@ -296,7 +405,7 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
             />
           ))}
           <label className="swatch custom-color">
-            Custom
+            <span className="sr-only">Custom</span>
             <input
               type="color"
               aria-label="Custom color"
@@ -313,10 +422,11 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
           <button
             type="button"
             className={snapshot.wireframe ? 'tool-btn active' : 'tool-btn'}
+            aria-label={snapshot.wireframe ? 'Wireframe on' : 'Wireframe off'}
             aria-pressed={snapshot.wireframe}
             onClick={() => editor.dispatch({ kind: 'setWireframe', enabled: !snapshot.wireframe })}
           >
-            {snapshot.wireframe ? 'On' : 'Off'}
+            {snapshot.wireframe ? <Grid3x3 size={16} strokeWidth={1.75} aria-hidden="true" /> : <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />}
           </button>
         </div>
       </section>
@@ -326,25 +436,33 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
           <button
             type="button"
             className={snapshot.showGizmo ? 'tool-btn active' : 'tool-btn'}
+            aria-label={snapshot.showGizmo ? 'Gizmo on' : 'Gizmo off'}
             aria-pressed={snapshot.showGizmo}
             onClick={() => editor.dispatch({ kind: 'setGizmo', enabled: !snapshot.showGizmo })}
           >
-            {snapshot.showGizmo ? 'On' : 'Off'}
+            {snapshot.showGizmo ? <Move3d size={16} strokeWidth={1.75} aria-hidden="true" /> : <EyeOff size={16} strokeWidth={1.75} aria-hidden="true" />}
           </button>
         </div>
       </section>
       <section>
         <h2>Shade</h2>
         <div className="tool-row" role="group" aria-label="Shade">
-          {(['toon', 'ink', 'flat'] as const).map((shade) => (
+          {(
+            [
+              ['toon', Circle],
+              ['ink', PenLine],
+              ['flat', Square],
+            ] as const
+          ).map(([shade, Icon]) => (
             <button
               key={shade}
               type="button"
               className={snapshot.shade === shade ? 'tool-btn active' : 'tool-btn'}
+              aria-label={shade}
               aria-pressed={snapshot.shade === shade}
               onClick={() => editor.dispatch({ kind: 'setShade', shade })}
             >
-              {shade}
+              <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -363,15 +481,22 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
       <section>
         <h2>Light</h2>
         <div className="tool-row" role="group" aria-label="Light">
-          {(['studio', 'soft', 'rim'] as const).map((light) => (
+          {(
+            [
+              ['studio', Sun],
+              ['soft', CloudSun],
+              ['rim', Lamp],
+            ] as const
+          ).map(([light, Icon]) => (
             <button
               key={light}
               type="button"
               className={snapshot.light === light ? 'tool-btn active' : 'tool-btn'}
+              aria-label={light}
               aria-pressed={snapshot.light === light}
               onClick={() => editor.dispatch({ kind: 'setLight', light })}
             >
-              {light}
+              <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -383,18 +508,25 @@ export function Inspector({ editor, snapshot }: { editor: Editor; snapshot: Snap
       <section>
         <h2>Array</h2>
         <div className="tool-row" role="group" aria-label="Array layout">
-          {(['line', 'radial', 'scatter'] as const).map((layout) => (
+          {(
+            [
+              ['line', Rows3],
+              ['radial', Orbit],
+              ['scatter', Shuffle],
+            ] as const
+          ).map(([layout, Icon]) => (
             <button
               key={layout}
               type="button"
               className={selected?.array?.layout === layout ? 'tool-btn active' : 'tool-btn'}
+              aria-label={layout}
               aria-pressed={selected?.array?.layout === layout}
               disabled={!selected}
               onClick={() =>
                 setArray(layout, selected?.array?.axis ?? (layout === 'radial' ? 'y' : 'x'), arrayCount, arrayGap)
               }
             >
-              {layout}
+              <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           ))}
         </div>

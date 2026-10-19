@@ -1,6 +1,15 @@
+import type { TriangleMesh } from './triangles'
+
 export type ObjectId = string & { readonly __brand: 'ObjectId' }
 
-export type ShapeKind = 'box' | 'sphere' | 'plane' | 'cone' | 'cylinder' | 'torus' | 'capsule'
+export type ShapeKind = 'box' | 'sphere' | 'plane' | 'cone' | 'cylinder' | 'torus' | 'capsule' | 'custom' | 'fbx'
+
+export type Quad = readonly [number, number, number, number]
+
+export type QuadMesh = {
+  positions: readonly Vec3[]
+  faces: readonly Quad[]
+}
 
 export type ShapeForm = 'positive' | 'negative'
 
@@ -49,6 +58,8 @@ export type ShapeObject = {
   array: ArrayRule | null
   stroke: StrokePath | null
   remix: number | null
+  mesh: QuadMesh | null
+  triangles: TriangleMesh | null
   transform: Transform
 }
 
@@ -70,7 +81,7 @@ export type PointerLock =
 
 export type Hit =
   | { target: 'empty' }
-  | { target: 'mesh'; id: ObjectId }
+  | { target: 'mesh'; id: ObjectId; face: number | null }
   | { target: 'gizmo'; id: ObjectId; axis: Axis }
 
 export type ScreenPoint = { x: number; y: number }
@@ -79,6 +90,10 @@ export type PointerButton = 'left' | 'middle' | 'right' | 'none'
 
 export type Intent =
   | { kind: 'add'; shape: ShapeKind }
+  | { kind: 'addFbx'; name: string; triangles: TriangleMesh }
+  | { kind: 'extrude' }
+  | { kind: 'inset' }
+  | { kind: 'loopCut' }
   | { kind: 'select'; id: ObjectId | null }
   | { kind: 'delete' }
   | { kind: 'setTool'; tool: GizmoTool }
@@ -127,6 +142,7 @@ export type Edit =
   | { kind: 'setName'; id: ObjectId; from: string; to: string }
   | { kind: 'setRemix'; id: ObjectId; from: number | null; to: number | null }
   | { kind: 'setStroke'; id: ObjectId; from: StrokePath | null; to: StrokePath | null }
+  | { kind: 'setMesh'; id: ObjectId; from: QuadMesh | null; to: QuadMesh | null }
   | { kind: 'insertMany'; index: number; objects: readonly ShapeObject[] }
   | { kind: 'removeMany'; index: number; objects: readonly ShapeObject[] }
 
@@ -141,6 +157,7 @@ export type State = {
   drawingStroke: boolean
   strokeDraft: StrokePoint[] | null
   light: LightPreset
+  activeFace: number | null
   pointer: PointerLock
   draft: Transform | null
   past: Edit[]
@@ -159,6 +176,7 @@ export type Snapshot = {
   drawingStroke: boolean
   strokeDraft: StrokePoint[] | null
   light: LightPreset
+  activeFace: number | null
   pointer: PointerLock
   draft: Transform | null
   canUndo: boolean
@@ -183,6 +201,9 @@ export type ProjectedMesh = {
   array: ArrayRule | null
   stroke: StrokePath | null
   remix: number | null
+  mesh: QuadMesh | null
+  triangles: TriangleMesh | null
+  activeFace: number | null
 }
 
 const KIND_LABEL: Record<ShapeKind, string> = {
@@ -193,6 +214,8 @@ const KIND_LABEL: Record<ShapeKind, string> = {
   cylinder: 'Cylinder',
   torus: 'Torus',
   capsule: 'Capsule',
+  custom: 'Custom',
+  fbx: 'FBX',
 }
 
 export function identityDeform(): Deform {
@@ -272,6 +295,7 @@ export function objectById(document: ShapeDocument, id: ObjectId): ShapeObject |
 export type MeshSource = {
   document: ShapeDocument
   selection: ObjectId | null
+  activeFace: number | null
   pointer: PointerLock
   draft: Transform | null
 }
@@ -290,6 +314,13 @@ export function vec3Equal(a: Vec3, b: Vec3): boolean {
 
 export function transformsEqual(a: Transform, b: Transform): boolean {
   return vec3Equal(a.position, b.position) && vec3Equal(a.rotation, b.rotation) && vec3Equal(a.scale, b.scale)
+}
+
+export function cloneMeshData(mesh: QuadMesh): QuadMesh {
+  return {
+    positions: mesh.positions.map((position) => ({ ...position })),
+    faces: mesh.faces.map((face) => [face[0], face[1], face[2], face[3]]),
+  }
 }
 
 export function applyEdit(document: ShapeDocument, edit: Edit): ShapeDocument {
@@ -356,6 +387,13 @@ export function applyEdit(document: ShapeDocument, edit: Edit): ShapeDocument {
         ),
       }
     }
+    case 'setMesh': {
+      return {
+        objects: document.objects.map((object) =>
+          object.id === edit.id ? { ...object, mesh: edit.to ? cloneMeshData(edit.to) : null } : object,
+        ),
+      }
+    }
     case 'insertMany': {
       const objects = document.objects.slice()
       objects.splice(edit.index, 0, ...edit.objects)
@@ -399,6 +437,8 @@ export function invertEdit(edit: Edit): Edit {
       return { kind: 'setRemix', id: edit.id, from: edit.to, to: edit.from }
     case 'setStroke':
       return { kind: 'setStroke', id: edit.id, from: edit.to, to: edit.from }
+    case 'setMesh':
+      return { kind: 'setMesh', id: edit.id, from: edit.to, to: edit.from }
     case 'insertMany':
       return { kind: 'removeMany', index: edit.index, objects: edit.objects }
     case 'removeMany':
@@ -422,6 +462,7 @@ export function initialState(): State {
     drawingStroke: false,
     strokeDraft: null,
     light: 'studio',
+    activeFace: null,
     pointer: { owner: 'idle' },
     draft: null,
     past: [],
@@ -442,6 +483,7 @@ export function toSnapshot(state: State): Snapshot {
     drawingStroke: state.drawingStroke,
     strokeDraft: state.strokeDraft,
     light: state.light,
+    activeFace: state.activeFace,
     pointer: state.pointer,
     draft: state.draft,
     canUndo: state.past.length > 0,

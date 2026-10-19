@@ -6,6 +6,8 @@ export const KIND_MATTE = {
   cylinder: '#6E9A8A',
   torus: '#8E7EAE',
   capsule: '#D0A06A',
+  custom: '#7E9AA0',
+  fbx: '#8E7E6A',
 } as const
 
 export const COLOR_SWATCHES = ['#C4A574', '#7E8BA0', '#3B82F6', '#E07A7A', '#6E9A8A', '#8E7EAE', '#193438'] as const

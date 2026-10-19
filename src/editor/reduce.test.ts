@@ -223,7 +223,7 @@ test('gizmo drag commits one replaceTransform and mesh drag does not move', () =
   const originX = requireObject(state, 0).transform.position.x
   state = reduce(state, {
     kind: 'pointerDown',
-    hit: { target: 'mesh', id },
+    hit: { target: 'mesh', id, face: null },
     screen: { x: 10, y: 10 },
     button: 'left',
   })

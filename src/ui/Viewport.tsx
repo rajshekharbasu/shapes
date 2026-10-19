@@ -14,7 +14,7 @@ import {
 import type { Editor } from '../editor/store'
 import { COLOR_SWATCHES, tokens } from '../theme'
 import { projectMeshes, restPose } from './projectMesh'
-import { createShapeGeometry } from './shapeGeometry'
+import { createShapeGeometry, geometryFromQuads, geometryFromTriangles } from './shapeGeometry'
 import { applyDeform } from './deform'
 
 const DEG = Math.PI / 180
@@ -45,7 +45,8 @@ function hitFromIntersects(intersects: THREE.Intersection[]): Hit {
   for (const item of intersects) {
     const data = item.object.userData
     if (data.hit === 'mesh') {
-      return { target: 'mesh', id: data.id as ObjectId }
+      const triangle = item.faceIndex ?? 0
+      return { target: 'mesh', id: data.id as ObjectId, face: Math.floor(triangle / 2) }
     }
   }
   return { target: 'empty' }
@@ -159,9 +160,20 @@ function ShapeMesh({
 }) {
   const rest = restPose(item.kind).rotateX * DEG
   const geometry = useMemo(
-    () => applyDeform(createShapeGeometry(item.kind), item.deform),
-    [item.kind, item.deform],
+    () =>
+      applyDeform(
+        item.triangles ? geometryFromTriangles(item.triangles) : item.mesh ? geometryFromQuads(item.mesh) : createShapeGeometry(item.kind),
+        item.deform,
+      ),
+    [item.kind, item.deform, item.mesh, item.triangles],
   )
+  const faceGeometry = useMemo(() => {
+    if (!item.mesh || item.activeFace === null) return null
+    const face = item.mesh.faces[item.activeFace]
+    if (!face) return null
+    return geometryFromQuads({ positions: item.mesh.positions, faces: [face] })
+  }, [item.mesh, item.activeFace])
+  useEffect(() => () => faceGeometry?.dispose(), [faceGeometry])
   const edges = useMemo(() => {
     const base = new THREE.EdgesGeometry(geometry)
     if (shade !== 'ink') return base
@@ -241,6 +253,11 @@ function ShapeMesh({
             <mesh geometry={geometry} rotation={[rest, 0, 0]} userData={{ hit: 'mesh', id: item.id }}>
               <ShadeMaterial color={fill} shade={shade} transparent={false} opacity={1} />
             </mesh>
+            {faceGeometry && item.selected ? (
+              <mesh geometry={faceGeometry} rotation={[rest, 0, 0]} renderOrder={2}>
+                <meshBasicMaterial color={tokens.onStageAccent} transparent opacity={0.45} depthWrite={false} side={THREE.DoubleSide} />
+              </mesh>
+            ) : null}
             {shade === 'ink' || (wireframe && item.selected) ? (
               <lineSegments geometry={edges} rotation={[rest, 0, 0]} renderOrder={1}>
                 <lineBasicMaterial color={shade === 'ink' ? inkColor : tokens.onStageAccent} />

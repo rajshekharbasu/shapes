@@ -19,9 +19,12 @@ import {
   type Intent,
   type ShapeObject,
   type State,
+  type QuadMesh,
   type Transform,
   type Vec3,
 } from './model'
+import { cloneMesh, cubeMesh, extrudeFace, insetFace, loopCut } from './mesh'
+import { cloneTriangles, fitTriangles } from './triangles'
 import { KIND_MATTE } from '../theme'
 
 function pushEdit(state: State, edit: Edit): State {
@@ -92,6 +95,8 @@ function addObject(state: State, shape: Intent & { kind: 'add' }): State {
     array: null,
     stroke: null,
     remix: null,
+    mesh: shape.shape === 'custom' ? cubeMesh() : null,
+    triangles: null,
     transform: spawnTransform(objectCount),
   }
   const edit: Edit = {
@@ -102,10 +107,62 @@ function addObject(state: State, shape: Intent & { kind: 'add' }): State {
   return {
     ...pushEdit(state, edit),
     selection: object.id,
+    activeFace: object.mesh ? 0 : null,
     pointer: { owner: 'idle' },
     draft: null,
     nextSerial: state.nextSerial + 1,
   }
+}
+
+function addFbx(state: State, intent: Intent & { kind: 'addFbx' }): State {
+  const triangles = fitTriangles(intent.triangles.positions, intent.triangles.indices)
+  if (!triangles) return state
+  const objectCount = state.document.objects.length
+  const trimmed = intent.name.replace(/\.fbx$/i, '').trim().slice(0, 32)
+  const object = {
+    id: createObjectId(state.nextSerial),
+    kind: 'fbx' as const,
+    name: trimmed.length > 0 ? trimmed : spawnName('fbx', state.document.objects),
+    form: 'positive' as const,
+    color: KIND_MATTE.fbx,
+    deform: identityDeform(),
+    array: null,
+    stroke: null,
+    remix: null,
+    mesh: null,
+    triangles,
+    transform: spawnTransform(objectCount),
+  }
+  const edit: Edit = { kind: 'insert', index: objectCount, object }
+  return {
+    ...pushEdit(state, edit),
+    selection: object.id,
+    activeFace: null,
+    pointer: { owner: 'idle' },
+    draft: null,
+    nextSerial: state.nextSerial + 1,
+  }
+}
+
+function meshEqual(a: QuadMesh | null, b: QuadMesh | null): boolean {
+  if (a === b) return true
+  if (!a || !b || a.positions.length !== b.positions.length || a.faces.length !== b.faces.length) return false
+  return true
+}
+
+function modelFace(state: State, op: 'extrude' | 'inset' | 'loopCut'): State {
+  if (state.selection === null || state.activeFace === null) return state
+  const object = objectById(state.document, state.selection)
+  if (!object?.mesh) return state
+  const next =
+    op === 'extrude'
+      ? extrudeFace(object.mesh, state.activeFace, 0.35)
+      : op === 'inset'
+        ? insetFace(object.mesh, state.activeFace, 0.35)
+        : loopCut(object.mesh, state.activeFace, 0)
+  if (!next || meshEqual(object.mesh, next)) return state
+  const edit: Edit = { kind: 'setMesh', id: object.id, from: cloneMesh(object.mesh), to: next }
+  return pushEdit(state, edit)
 }
 
 function deleteSelected(state: State): State {
@@ -200,6 +257,8 @@ function copyObject(state: State, source: ShapeObject, transform: ShapeObject['t
     array: null,
     stroke: null,
     remix: null,
+    mesh: source.mesh ? cloneMesh(source.mesh) : null,
+    triangles: source.triangles ? cloneTriangles(source.triangles) : null,
     transform,
   }
 }
@@ -295,10 +354,14 @@ function pointerDown(state: State, intent: Intent & { kind: 'pointerDown' }): St
     }
   }
   if (hit.target === 'mesh') {
-    if (state.selection === hit.id && state.draft === null) return state
+    const object = objectById(state.document, hit.id)
+    const faceCount = object?.mesh?.faces.length ?? 0
+    const face = object?.mesh && hit.face !== null && hit.face >= 0 && hit.face < faceCount ? hit.face : object?.mesh ? 0 : null
+    if (state.selection === hit.id && state.activeFace === face && state.draft === null) return state
     return {
       ...state,
       selection: hit.id,
+      activeFace: face,
       pointer: { owner: 'idle' },
       draft: null,
     }
@@ -408,7 +471,8 @@ function selectionForHistory(document: State['document'], edit: Edit, direction:
     edit.kind === 'setArray' ||
     edit.kind === 'setName' ||
     edit.kind === 'setRemix' ||
-    edit.kind === 'setStroke'
+    edit.kind === 'setStroke' ||
+    edit.kind === 'setMesh'
   ) {
     return edit.id
   }
@@ -454,16 +518,27 @@ export function reduce(state: State, intent: Intent): State {
   switch (intent.kind) {
     case 'add':
       return addObject(state, intent)
-    case 'select':
+    case 'addFbx':
+      return addFbx(state, intent)
+    case 'extrude':
+      return modelFace(state, 'extrude')
+    case 'inset':
+      return modelFace(state, 'inset')
+    case 'loopCut':
+      return modelFace(state, 'loopCut')
+    case 'select': {
       if (state.selection === intent.id && state.pointer.owner === 'idle' && state.draft === null) {
         return state
       }
+      const object = intent.id ? objectById(state.document, intent.id) : undefined
       return {
         ...state,
         selection: intent.id,
+        activeFace: object?.mesh ? 0 : null,
         pointer: { owner: 'idle' },
         draft: null,
       }
+    }
     case 'delete':
       return deleteSelected(state)
     case 'setTool':
